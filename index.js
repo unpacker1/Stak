@@ -9,7 +9,7 @@ const GS = { lat: 38.7225, lon: 35.4875, height: 1 } // Kayseri
 let sats = []
 let timeOffset = 0
 
-// TLE yükleme
+// --- TLE Load ---
 async function loadTLE() {
     try {
         const r = await axios.get("https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle")
@@ -25,16 +25,15 @@ async function loadTLE() {
     }
 }
 
-// Uydu hesaplama
+// --- Compute Satellite Positions ---
 function compute() {
     const now = new Date(Date.now() + timeOffset)
     const gmst = satellite.gstime(now)
-    const observer = {
+    const obs = {
         latitude: satellite.degreesToRadians(GS.lat),
         longitude: satellite.degreesToRadians(GS.lon),
         height: GS.height
     }
-
     return sats.slice(0, 150).map(s => {
         const pv = satellite.propagate(s.satrec, now)
         if (!pv.position) return null
@@ -43,13 +42,13 @@ function compute() {
         const lon = satellite.degreesLong(gd.longitude)
         const alt = gd.height
         const ecf = satellite.eciToEcf(pv.position, gmst)
-        const look = satellite.ecfToLookAngles(observer, ecf)
+        const look = satellite.ecfToLookAngles(obs, ecf)
         const el = satellite.degreesLat(look.elevation)
         return { name: s.name, lat, lon, alt, el }
     }).filter(Boolean)
 }
 
-// Orbit çizgisi
+// --- Orbit Path ---
 function orbitPath(satrec) {
     const pts = []
     for (let i = 0; i <= 90; i += 3) { // 90 dakika, 3dk adım
@@ -63,7 +62,7 @@ function orbitPath(satrec) {
     return pts
 }
 
-// API
+// --- Express API ---
 app.get("/api", (req, res) => res.json(compute()))
 app.get("/orbit/:name", (req, res) => {
     const s = sats.find(x => x.name === req.params.name)
@@ -71,7 +70,7 @@ app.get("/orbit/:name", (req, res) => {
 })
 app.get("/speed/:ms", (req, res) => { timeOffset += parseInt(req.params.ms); res.send("ok") })
 
-// 3D HTML
+// --- HTML 3D Viewer ---
 app.get("/", (req, res) => {
     res.send(`
 <!DOCTYPE html>
@@ -97,25 +96,22 @@ app.get("/", (req, res) => {
 <script>
 let scene=new THREE.Scene()
 let camera=new THREE.PerspectiveCamera(60,window.innerWidth/window.innerHeight,0.1,1000)
-let renderer=new THREE.WebGLRenderer()
+let renderer=new THREE.WebGLRenderer({antialias:true})
 renderer.setSize(window.innerWidth,window.innerHeight)
 document.body.appendChild(renderer.domElement)
 let controls=new THREE.OrbitControls(camera,renderer.domElement)
-camera.position.set(0,50,150)
+camera.position.set(0,120,250)
 controls.update()
 
-// Light
 let light=new THREE.DirectionalLight(0xffffff,1)
 light.position.set(100,100,100)
 scene.add(light)
 
-// Earth
 const earthGeo=new THREE.SphereGeometry(50,64,64)
 const earthMat=new THREE.MeshPhongMaterial({color:0x2233ff})
 const earth=new THREE.Mesh(earthGeo,earthMat)
 scene.add(earth)
 
-// Satellites
 let satObjects=[], orbitLines=[], selectedSat=null
 
 function latLonToXYZ(lat,lon,radius=50){
@@ -127,7 +123,7 @@ function latLonToXYZ(lat,lon,radius=50){
     return new THREE.Vector3(x,y,z)
 }
 
-function update(){
+function updateSatellites(){
     fetch('/api').then(r=>r.json()).then(data=>{
         satObjects.forEach(s=>scene.remove(s))
         satObjects=[]
@@ -136,7 +132,7 @@ function update(){
         let sel=document.getElementById("sel")
         sel.innerHTML=""
         let visible=[]
-        data.forEach(s=>{
+        data.forEach((s,i)=>{
             let sphere=new THREE.Mesh(new THREE.SphereGeometry(0.8,6,6),
                 new THREE.MeshBasicMaterial({color:s.el>0?0x00ff00:0xff0000}))
             sphere.position.copy(latLonToXYZ(s.lat,s.lon,50+s.alt/1000))
@@ -162,10 +158,9 @@ function selectSat(name){
 function animate(){
     requestAnimationFrame(animate)
     controls.update()
-    update()
     renderer.render(scene,camera)
 }
-
+setInterval(updateSatellites,2000)
 animate()
 </script>
 </body>
@@ -173,5 +168,5 @@ animate()
 `)
 })
 
-// Başlat
+// --- Start Server ---
 loadTLE().then(()=>app.listen(PORT,()=>console.log("3D Tracker running on http://localhost:"+PORT)))
